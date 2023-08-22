@@ -156,6 +156,7 @@
 //! // EEPROM writes four pages. This introduces a delay of at least 20 ms, 5 ms per page.
 //! ```
 
+#![feature(async_fn_in_trait)]
 #![deny(missing_docs, unsafe_code)]
 #![no_std]
 
@@ -273,6 +274,26 @@ pub trait Eeprom24xTrait: private::Sealed {
 
     /// Return device page size
     fn page_size(&self) -> usize;
+}
+
+/// `Eeprom24x` type trait for use in generic code
+pub trait Eeprom24xAsyncTrait: private::Sealed {
+    /// Inner implementation error.
+    type Error;
+
+    /// Write a single byte in an address.
+    ///
+    /// After writing a byte, the EEPROM enters an internally-timed write cycle
+    /// to the nonvolatile memory.
+    /// During this time all inputs are disabled and the EEPROM will not
+    /// respond until the write is complete.
+    async fn write_byte(&mut self, address: u32, data: u8) -> Result<(), Error<Self::Error>>;
+
+    /// Read a single byte from an address.
+    async fn read_byte(&mut self, address: u32) -> Result<u8, Error<Self::Error>>;
+
+    /// Read starting in an address as many bytes as necessary to fill the data array provided.
+    async fn read_data(&mut self, address: u32, data: &mut [u8]) -> Result<(), Error<Self::Error>>;
 }
 
 /// EEPROM24X extension which supports the `embedded-storage` traits but requires an

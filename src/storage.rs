@@ -38,6 +38,7 @@ impl<I2C, PS, AS, CD> Storage<I2C, PS, AS, CD> {
     }
 }
 
+#[cfg(not(feature = "async"))]
 impl<I2C, E, PS, AS, CD> embedded_storage::ReadStorage for Storage<I2C, PS, AS, CD>
 where
     I2C: Write<Error = E> + WriteRead<Error = E>,
@@ -57,6 +58,7 @@ where
     }
 }
 
+#[cfg(not(feature = "async"))]
 impl<I2C, E, PS, AS, CD> embedded_storage::Storage for Storage<I2C, PS, AS, CD>
 where
     I2C: Write<Error = E> + WriteRead<Error = E>,

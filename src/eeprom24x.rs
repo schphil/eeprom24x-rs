@@ -1,6 +1,7 @@
 use crate::{addr_size, page_size, private, Eeprom24x, Error, SlaveAddr};
 use core::marker::PhantomData;
 use embedded_hal::blocking::i2c::{Write, WriteRead};
+use embedded_hal_async::i2c::{ErrorKind as AsyncI2cErrorKind, ErrorType as AsyncI2cErrorType, I2c as AsyncI2c};
 pub trait MultiSizeAddr: private::Sealed {
     const ADDRESS_BYTES: usize;
 
@@ -49,6 +50,7 @@ where
     }
 }
 
+#[cfg(not(feature = "async"))]
 /// Common methods
 impl<I2C, E, PS, AS> Eeprom24x<I2C, PS, AS>
 where
@@ -91,6 +93,55 @@ where
         self.i2c
             .write_read(devaddr, &memaddr[..AS::ADDRESS_BYTES], data)
             .map_err(Error::I2C)
+    }
+}
+
+#[cfg(feature = "async")]
+/// Common methods
+impl<I2C, PS, AS> Eeprom24x<I2C, PS, AS>
+where
+    I2C: AsyncI2c,
+    AS: MultiSizeAddr,
+{
+    /// Write a single byte in an address.
+    ///
+    /// After writing a byte, the EEPROM enters an internally-timed write cycle
+    /// to the nonvolatile memory.
+    /// During this time all inputs are disabled and the EEPROM will not
+    /// respond until the write is complete.
+    pub async fn write_byte(&mut self, address: u32, data: u8) -> Result<(), Error<<I2C as embedded_hal_async::i2c::ErrorType>::Error>> {
+        let devaddr = self.get_device_address(address)?;
+        let mut payload = [0; 3];
+        AS::fill_address(address, &mut payload);
+        payload[AS::ADDRESS_BYTES] = data;
+        Ok(self.i2c
+            .write(devaddr, &payload[..=AS::ADDRESS_BYTES])
+            .await
+            .map_err(Error::I2C)?)
+    }
+
+    /// Read a single byte from an address.
+    pub async fn read_byte(&mut self, address: u32) -> Result<u8, Error<<I2C as embedded_hal_async::i2c::ErrorType>::Error>> {
+        let devaddr = self.get_device_address(address)?;
+        let mut memaddr = [0; 2];
+        AS::fill_address(address, &mut memaddr);
+        let mut data = [0; 1];
+        Ok(self.i2c
+            .write_read(devaddr, &memaddr[..AS::ADDRESS_BYTES], &mut data)
+            .await
+            .map_err(Error::I2C)
+            .and(Ok(data[0]))?)
+    }
+
+    /// Read starting in an address as many bytes as necessary to fill the data array provided.
+    pub async fn read_data(&mut self, address: u32, data: &mut [u8]) -> Result<(), Error<<I2C as embedded_hal_async::i2c::ErrorType>::Error>> {
+        let devaddr = self.get_device_address(address)?;
+        let mut memaddr = [0; 2];
+        AS::fill_address(address, &mut memaddr);
+        Ok(self.i2c
+            .write_read(devaddr, &memaddr[..AS::ADDRESS_BYTES], data)
+            .await
+            .map_err(Error::I2C)?)
     }
 }
 
@@ -276,6 +327,29 @@ macro_rules! impl_for_page_size {
                 fn page_size(&self) -> usize
                 {
                     $page_size
+                }
+            }
+
+        impl<I2C, AS> crate::Eeprom24xAsyncTrait for Eeprom24x<I2C, page_size::$PS, AS>
+        where
+            I2C: AsyncI2c,
+            AS: MultiSizeAddr
+            {
+                type Error = <I2C as embedded_hal_async::i2c::ErrorType>::Error;
+
+                async fn write_byte(&mut self, address: u32, data: u8) -> Result<(), Error<Self::Error>>
+                {
+                    self.write_byte(address, data).await
+                }
+
+                async fn read_byte(&mut self, address: u32) -> Result<u8, Error<Self::Error>>
+                {
+                    self.read_byte(address).await
+                }
+
+                async fn read_data(&mut self, address: u32, data: &mut [u8]) -> Result<(), Error<Self::Error>>
+                {
+                    self.read_data(address, data).await
                 }
             }
     };
