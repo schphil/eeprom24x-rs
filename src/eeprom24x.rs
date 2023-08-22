@@ -196,6 +196,8 @@ macro_rules! impl_create {
     };
 }
 
+
+#[cfg(not(feature = "async"))]
 // This macro could be simplified once https://github.com/rust-lang/rust/issues/42863 is fixed.
 macro_rules! impl_for_page_size {
     ( $AS:ident, $addr_bytes:expr, $PS:ident, $page_size:expr,
@@ -214,6 +216,144 @@ macro_rules! impl_for_page_size {
         impl<I2C, E> Eeprom24x<I2C, page_size::$PS, addr_size::$AS>
         where
             I2C: Write<Error = E>
+        {
+            $(
+                impl_create!($dev, $part, $address_bits, $create);
+            )*
+
+            #[doc = $doc_new]
+            fn new(i2c: I2C, address: SlaveAddr, address_bits: u8) -> Self {
+                Eeprom24x {
+                    i2c,
+                    address,
+                    address_bits,
+                    _ps: PhantomData,
+                    _as: PhantomData,
+                }
+            }
+        }
+
+        impl<I2C, E, AS> Eeprom24x<I2C, page_size::$PS, AS>
+        where
+            I2C: Write<Error = E>,
+            AS: MultiSizeAddr,
+        {
+            /// Write up to a page starting in an address.
+            ///
+            /// The maximum amount of data that can be written depends on the page
+            /// size of the device and its overall capacity. If too much data is passed,
+            /// the error `Error::TooMuchData` will be returned.
+            ///
+            /// After writing a byte, the EEPROM enters an internally-timed write cycle
+            /// to the nonvolatile memory.
+            /// During this time all inputs are disabled and the EEPROM will not
+            /// respond until the write is complete.
+            pub fn write_page(&mut self, address: u32, data: &[u8]) -> Result<(), Error<E>> {
+                if data.len() == 0 {
+                    return Ok(());
+                }
+
+                // check this before to ensure that data.len() fits into u32
+                // ($page_size always fits as its maximum value is 256).
+                if data.len() > $page_size {
+                    // This would actually be supported by the EEPROM but
+                    // the data in the page would be overwritten
+                    return Err(Error::TooMuchData);
+                }
+
+                let page_boundary = address | ($page_size as u32 - 1);
+                if address + data.len() as u32 > page_boundary + 1 {
+                    // This would actually be supported by the EEPROM but
+                    // the data in the page would be overwritten
+                    return Err(Error::TooMuchData);
+                }
+
+                let devaddr = self.get_device_address(address)?;
+                let mut payload: [u8; $addr_bytes + $page_size] = [0; $addr_bytes + $page_size];
+                AS::fill_address(address, &mut payload);
+                // only available since Rust 1.31: #[allow(clippy::range_plus_one)]
+                payload[$addr_bytes..$addr_bytes + data.len()].copy_from_slice(&data);
+                // only available since Rust 1.31: #[allow(clippy::range_plus_one)]
+                self.i2c
+                    .write(devaddr, &payload[..$addr_bytes + data.len()])
+                    .map_err(Error::I2C)
+            }
+        }
+
+        impl<I2C, E, AS> PageWrite<E> for Eeprom24x<I2C, page_size::$PS, AS>
+        where
+            I2C: Write<Error = E>,
+            AS: MultiSizeAddr,
+        {
+            fn page_write(&mut self, address: u32, data: &[u8]) -> Result<(), Error<E>> {
+                self.write_page(address, data)
+            }
+
+            fn page_size(&self) -> usize {
+                $page_size
+            }
+        }
+
+        impl<I2C, E, AS> crate::Eeprom24xTrait for Eeprom24x<I2C, page_size::$PS, AS>
+        where
+            I2C: Write<Error = E> + WriteRead<Error=E> + embedded_hal::blocking::i2c::Read<Error = E>,
+            AS: MultiSizeAddr
+            {
+                type Error = E;
+
+                fn write_byte(&mut self, address: u32, data: u8) -> Result<(), Error<Self::Error>>
+                {
+                    self.write_byte(address, data)
+                }
+
+                fn read_byte(&mut self, address: u32) -> Result<u8, Error<Self::Error>>
+                {
+                    self.read_byte(address)
+                }
+
+                fn read_data(&mut self, address: u32, data: &mut [u8]) -> Result<(), Error<Self::Error>>
+                {
+                    self.read_data(address, data)
+                }
+
+                fn read_current_address(&mut self) -> Result<u8, Error<Self::Error>>
+                {
+                    self.read_current_address()
+                }
+
+                fn write_page(&mut self, address: u32, data: &[u8]) -> Result<(), Error<Self::Error>>
+                {
+                    self.write_page(address, &data)
+                }
+
+                fn page_size(&self) -> usize
+                {
+                    $page_size
+                }
+            }
+    };
+}
+
+
+#[cfg(feature = "async")]
+// This macro could be simplified once https://github.com/rust-lang/rust/issues/42863 is fixed.
+macro_rules! impl_for_page_size {
+    ( $AS:ident, $addr_bytes:expr, $PS:ident, $page_size:expr,
+        $( [ $dev:expr, $part:expr, $address_bits:expr, $create:ident ] ),* ) => {
+        impl_for_page_size!{
+            @gen [$AS, $addr_bytes, $PS, $page_size,
+            concat!("Specialization for devices with a page size of ", stringify!($page_size), " bytes."),
+            concat!("Create generic instance for devices with a page size of ", stringify!($page_size), " bytes."),
+            $( [ $dev, $part, $address_bits, $create ] ),* ]
+        }
+    };
+
+    (@gen [$AS:ident, $addr_bytes:expr, $PS:ident, $page_size:expr, $doc_impl:expr, $doc_new:expr,
+        $( [ $dev:expr, $part:expr, $address_bits:expr, $create:ident ] ),* ] ) => {
+        #[doc = $doc_impl]
+        impl<I2C> Eeprom24x<I2C, page_size::$PS, addr_size::$AS>
+        where
+            I2C: AsyncI2c
         {
             $(
                 impl_create!($dev, $part, $address_bits, $create);
