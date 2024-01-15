@@ -156,9 +156,9 @@
 //! // EEPROM writes four pages. This introduces a delay of at least 20 ms, 5 ms per page.
 //! ```
 
-#![feature(async_fn_in_trait)]
 #![deny(missing_docs, unsafe_code)]
 #![no_std]
+#![allow(async_fn_in_trait)]
 
 use core::marker::PhantomData;
 
